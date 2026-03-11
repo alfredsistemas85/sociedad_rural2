@@ -65,12 +65,12 @@ async def procesar_archivo_banco(file: UploadFile = File(...)):
         for _, row in df.iterrows():
             # 4. Registramos el pago en Supabase
             try:
-                res = supabase.table("pagos").insert({
+                res = supabase.table("pagos_cuotas").insert({
                     "dni_socio": str(row["dni_socio"]),
                     "monto": row["monto"],
                     "fecha_pago": str(row["fecha"]),
                     "metodo": "Transferencia Bancaria",
-                    "estado": "completado" # Asumimos completado si viene del banco
+                    "estado": "completado"
                 }).execute()
                 resultados.append({"dni": row["dni_socio"], "status": "success"})
             except Exception as e:
