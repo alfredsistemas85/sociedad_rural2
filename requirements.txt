@@ -1,7 +1,7 @@
+# v3 - Upgrade supabase to fix httpx proxy conflict
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
 pandas==2.2.0
-supabase==2.3.4
-httpx==0.25.2
+supabase==2.9.1
 python-dotenv==1.0.1
 python-multipart==0.0.9
