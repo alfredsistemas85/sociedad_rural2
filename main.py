@@ -19,10 +19,9 @@ supabase: Client = create_client(URL, KEY)
 
 app = FastAPI(title="Sociedad Rural Backend - Procesamiento de Pagos")
 
-# Enable CORS for the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust this in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,57 +31,76 @@ app.add_middleware(
 async def root():
     return {"status": "online", "message": "Backend para procesamiento de archivos de banco"}
 
+
 @app.post("/procesar-pagos")
 async def procesar_archivo_banco(file: UploadFile = File(...)):
     """
     Recibe un archivo con formato de ancho fijo (FWF) del banco y lo procesa.
     Formato esperado:
-    - Fecha: 0-8
-    - Monto: 8-16
-    - DNI: 16-24
+    - Fecha: 0-8   (ej: 20240311)
+    - Monto: 8-16  (ej: 00004500 → $45.00)
+    - DNI:   16-24
     """
     if not file.filename.endswith('.txt'):
         raise HTTPException(status_code=400, detail="El archivo debe ser un .txt")
 
     try:
-        # Leer el contenido del archivo
         contents = await file.read()
         buffer = io.BytesIO(contents)
 
-        # 2. Definimos las posiciones según el manual del banco
-        # Fecha: 0-8, Monto: 8-16, DNI: 16-24
         ancho_columnas = [(0, 8), (8, 16), (16, 24)]
         nombres = ["fecha", "monto_raw", "dni_socio"]
 
-        # 3. Leemos el archivo con Pandas (Fixed Width Format)
-        df = pd.read_fwf(buffer, colspecs=ancho_columnas, names=nombres, dtype={"dni_socio": str})
+        df = pd.read_fwf(buffer, colspecs=ancho_columnas, names=nombres, dtype={"dni_socio": str, "fecha": str})
 
-        # Convertimos el monto (ej: 00004500 -> 45.00)
-        # Asumimos que los últimos 2 dígitos son decimales
+        # Convertimos el monto: 00004500 → 45.00
         df["monto"] = df["monto_raw"].astype(float) / 100
 
         resultados = []
         for _, row in df.iterrows():
-            # 4. Registramos el pago en Supabase
-            try:
-                res = supabase.table("pagos_cuotas").insert({
-                    "dni_socio": str(row["dni_socio"]),
-                    "monto": row["monto"],
-                    "fecha_pago": str(row["fecha"]),
-                    "metodo": "Transferencia Bancaria",
-                    "estado": "completado"
-                }).execute()
-                resultados.append({"dni": row["dni_socio"], "status": "success"})
-            except Exception as e:
-                resultados.append({"dni": row["dni_socio"], "status": "error", "message": str(e)})
+            dni = str(row["dni_socio"]).strip()
+            monto = row["monto"]
+            fecha_raw = str(row["fecha"]).strip()
 
+            # Convertir fecha de formato AAAAMMDD → AAAA-MM-DD
+            try:
+                fecha_vencimiento = f"{fecha_raw[0:4]}-{fecha_raw[4:6]}-{fecha_raw[6:8]}"
+            except Exception:
+                fecha_vencimiento = fecha_raw
+
+            # Buscar el UUID del socio por DNI en la tabla profiles
+            try:
+                perfil = supabase.table("profiles").select("id").eq("dni", dni).single().execute()
+                socio_id = perfil.data["id"]
+            except Exception:
+                resultados.append({
+                    "dni": dni,
+                    "status": "error",
+                    "message": f"Socio con DNI {dni} no encontrado en la base de datos."
+                })
+                continue
+
+            # Insertar el pago en pagos_cuotas
+            try:
+                supabase.table("pagos_cuotas").insert({
+                    "socio_id": socio_id,
+                    "monto": monto,
+                    "fecha_vencimiento": fecha_vencimiento,
+                    "estado_pago": "PAGADO",
+                }).execute()
+                resultados.append({"dni": dni, "socio_id": socio_id, "status": "success"})
+            except Exception as e:
+                resultados.append({"dni": dni, "status": "error", "message": str(e)})
+
+        exitos = sum(1 for r in resultados if r["status"] == "success")
         return {
-            "message": f"Procesados {len(df)} registros.",
+            "message": f"Procesados {len(df)} registros. {exitos} insertados correctamente.",
             "detalle": resultados
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando el archivo: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn
