@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { adminService } from '../../services/adminService';
 import { paymentsService } from '../../services/paymentsService';
@@ -26,6 +26,12 @@ export default function ValidacionPagos() {
     const [rejectReason, setRejectReason] = useState('');
     const [showRejectModal, setShowRejectModal] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const [uploadResult, setUploadResult] = useState<{ message: string; detalle: any[] } | null>(null);
+    const [uploadError, setUploadError] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
 
     const fetchPendientes = async () => {
         try {
@@ -89,9 +95,100 @@ export default function ValidacionPagos() {
         }
     };
 
+    const handleFileUpload = async () => {
+        if (!selectedFile) return;
+        setIsUploading(true);
+        setUploadResult(null);
+        setUploadError(null);
+        try {
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            const apiUrl = import.meta.env.VITE_API_URL || 'https://sociedad-rural2.onrender.com';
+            const res = await fetch(`${apiUrl}/procesar-pagos`, {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Error en el servidor');
+            setUploadResult(data);
+            setSelectedFile(null);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        } catch (err: any) {
+            setUploadError(err.message || 'Error desconocido');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
     return (
         <div className="flex flex-col gap-6 animate-in fade-in duration-500">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+
+            {/* ── SECCIÓN IMPORTACIÓN BANCARIA ─────────────────────── */}
+            <div className="bg-admin-card border border-admin-border rounded-2xl p-6">
+                <div className="flex items-center gap-3 mb-4">
+                    <div className="size-10 rounded-xl bg-admin-accent/10 flex items-center justify-center">
+                        <span className="material-symbols-outlined text-admin-accent">upload_file</span>
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-admin-text">Importar Archivo del Banco</h3>
+                        <p className="text-xs text-slate-500">Sube el archivo .txt de transferencias para registrar pagos automáticamente.</p>
+                    </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                    <label
+                        htmlFor="bank-file-input"
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-admin-border bg-admin-bg cursor-pointer hover:border-admin-accent hover:text-admin-accent transition-colors text-slate-400 text-sm font-semibold"
+                    >
+                        <span className="material-symbols-outlined text-[18px]">attach_file</span>
+                        {selectedFile ? selectedFile.name : 'Seleccionar archivo .txt'}
+                    </label>
+                    <input
+                        id="bank-file-input"
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".txt"
+                        className="hidden"
+                        onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    />
+                    <button
+                        onClick={handleFileUpload}
+                        disabled={!selectedFile || isUploading}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-admin-accent text-white font-bold rounded-xl shadow-lg shadow-admin-accent/20 hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all text-sm"
+                    >
+                        {isUploading ? (
+                            <><div className="size-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Procesando...</>
+                        ) : (
+                            <><span className="material-symbols-outlined text-[18px]">send</span>Procesar Pagos</>
+                        )}
+                    </button>
+                </div>
+
+                {/* Resultado */}
+                {uploadResult && (
+                    <div className="mt-4 p-4 bg-admin-bg rounded-xl border border-admin-border">
+                        <p className="text-sm font-bold text-admin-text mb-3">{uploadResult.message}</p>
+                        <div className="flex flex-col gap-2 max-h-40 overflow-y-auto admin-scroll">
+                            {uploadResult.detalle.map((r: any, i: number) => (
+                                <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono ${
+                                    r.status === 'success' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                                }`}>
+                                    <span>DNI: {r.dni}</span>
+                                    <span>{r.status === 'success' ? '✓ Registrado' : `✗ ${r.message}`}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {uploadError && (
+                    <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
+                        <span className="font-bold">Error:</span> {uploadError}
+                    </div>
+                )}
+            </div>
+            {/* ─────────────────────────────────────────────────────── */}
+
                 <div>
                     <h2 className="text-2xl font-bold text-admin-text tracking-tight">Validación de Comprobantes</h2>
                     <p className="text-slate-400 text-sm">Revisa pagos y sincroniza estados de mora.</p>
